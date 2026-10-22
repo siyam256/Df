@@ -60,4 +60,19 @@ class ExampleRobolectricTest {
         val formattedKB = FormatUtils.formatFileSize(512L * 1024)
         assertEquals("512 KB", formattedKB)
     }
+
+    @Test
+    fun `test app cache item creation and clean status`() {
+        val item = com.example.model.AppCacheItem(
+            packageName = "com.google.android.youtube",
+            appName = "YouTube",
+            cacheBytes = 450L * 1024 * 1024,
+            isSystemApp = false,
+            isCleaned = false
+        )
+        assertEquals("YouTube", item.appName)
+        assertEquals(450L * 1024 * 1024, item.cacheBytes)
+        val cleaned = item.copy(isCleaned = true)
+        assertTrue(cleaned.isCleaned)
+    }
 }

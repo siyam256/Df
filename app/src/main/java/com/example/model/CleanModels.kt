@@ -2,7 +2,8 @@ package com.example.model
 
 enum class CleanType {
     AUTO_SCHEDULED,
-    MANUAL
+    MANUAL,
+    APP_DEEP_CLEAN
 }
 
 data class CleanRecord(
@@ -30,6 +31,14 @@ data class CleanResult(
     val durationMs: Long,
     val success: Boolean,
     val message: String
+)
+
+data class AppCacheItem(
+    val packageName: String,
+    val appName: String,
+    val cacheBytes: Long,
+    val isSystemApp: Boolean = false,
+    val isCleaned: Boolean = false
 )
 
 data class DeviceStorageStats(

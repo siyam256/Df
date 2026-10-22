@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CleaningServices
@@ -37,11 +36,9 @@ import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -60,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.components.AppsCacheManagerCard
 import com.example.ui.components.BatteryOptimizationNotice
 import com.example.ui.components.DailyScheduleCard
 import com.example.ui.components.DashboardHero
@@ -94,6 +92,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.checkBatteryOptimization()
+        viewModel.checkPermissionsAndServices()
+        viewModel.loadStorageAndApps()
     }
 }
 
@@ -199,7 +199,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     Spacer(modifier = Modifier.width(6.dp))
 
                     IconButton(
-                        onClick = { viewModel.loadStorageStats() },
+                        onClick = { viewModel.loadStorageAndApps() },
                         modifier = Modifier.testTag("refresh_stats_button")
                     ) {
                         Icon(
@@ -244,7 +244,23 @@ fun MainScreen(viewModel: MainViewModel) {
                     )
                 }
 
-                // 2. Battery Optimization Notice (if needed for background wakeup)
+                // 2. Apps Cache Manager Card (Core answer to user query)
+                item {
+                    AppsCacheManagerCard(
+                        apps = uiState.installedApps,
+                        isAccessibilityEnabled = uiState.isAccessibilityEnabled,
+                        hasUsageStatsPermission = uiState.hasUsageStatsPermission,
+                        cleanState = uiState.appCleanState,
+                        language = uiState.language,
+                        onStartAutoClean = { viewModel.startAutomatedAppClean() },
+                        onStopAutoClean = { viewModel.stopAutomatedAppClean() },
+                        onOpenAppStorage = { pkg -> viewModel.openAppStorage(pkg) },
+                        onRequestAccessibility = { viewModel.requestAccessibility() },
+                        onRequestUsageAccess = { viewModel.requestUsageAccess() }
+                    )
+                }
+
+                // 3. Battery Optimization Notice (if needed for background wakeup)
                 item {
                     BatteryOptimizationNotice(
                         isIgnored = uiState.isBatteryOptimizationIgnored,
@@ -253,7 +269,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     )
                 }
 
-                // 3. Daily Scheduled Clean Card (User's primary requirement)
+                // 4. Daily Scheduled Clean Card
                 item {
                     DailyScheduleCard(
                         isEnabled = uiState.isScheduleEnabled,
@@ -265,7 +281,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     )
                 }
 
-                // 4. Scanned Cache Categories
+                // 5. Scanned Cache Categories Breakdown
                 item {
                     JunkCategoriesSection(
                         categories = uiState.categories,
@@ -273,7 +289,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     )
                 }
 
-                // 5. Clean History Records
+                // 6. Clean History Records
                 item {
                     HistoryLogSection(
                         historyList = uiState.historyList,

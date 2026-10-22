@@ -3,13 +3,17 @@ package com.example.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cleaner.AppCacheCleanerController
+import com.example.cleaner.AppCleanState
 import com.example.cleaner.CacheCleanerEngine
 import com.example.data.PreferencesManager
+import com.example.model.AppCacheItem
 import com.example.model.CleanCategory
 import com.example.model.CleanRecord
 import com.example.model.CleanType
 import com.example.model.DeviceStorageStats
 import com.example.scheduler.DailyCleanScheduler
+import com.example.util.FormatUtils
 import com.example.util.NotificationHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +29,11 @@ data class MainUiState(
     val cleaningStep: String = "",
     val stats: DeviceStorageStats = DeviceStorageStats(0, 0, 0, 0, 0),
     val categories: List<CleanCategory> = emptyList(),
+    val installedApps: List<AppCacheItem> = emptyList(),
+    val isAccessibilityEnabled: Boolean = false,
+    val hasUsageStatsPermission: Boolean = false,
+    val appCleanState: AppCleanState = AppCleanState(),
+    val showAppCleanModal: Boolean = false,
     val historyList: List<CleanRecord> = emptyList(),
     val lastCleanTime: Long = 0L,
     val lastCleanedBytes: Long = 0L,
@@ -61,20 +70,92 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
-        loadStorageStats()
-        checkBatteryOptimization()
+        checkPermissionsAndServices()
+        loadStorageAndApps()
+        observeAppCleanerController()
     }
 
-    fun loadStorageStats() {
+    private fun observeAppCleanerController() {
+        viewModelScope.launch {
+            AppCacheCleanerController.cleanState.collect { state ->
+                _uiState.update { it.copy(appCleanState = state) }
+            }
+        }
+
+        AppCacheCleanerController.onAppCleanedListener = { cleanedApp, bytesFreed ->
+            _uiState.update { current ->
+                val updatedList = current.installedApps.map {
+                    if (it.packageName == cleanedApp.packageName) it.copy(isCleaned = true) else it
+                }
+                current.copy(installedApps = updatedList)
+            }
+        }
+
+        AppCacheCleanerController.onAllCleanCompletedListener = { totalFreed, count ->
+            val record = CleanRecord(
+                id = System.currentTimeMillis().toString(),
+                timestamp = System.currentTimeMillis(),
+                freedBytes = totalFreed,
+                cleanType = CleanType.APP_DEEP_CLEAN,
+                itemsCleaned = count,
+                note = "All Apps Cache Auto Clean"
+            )
+            prefs.addCleanRecord(record)
+
+            if (prefs.isNotificationEnabled) {
+                NotificationHelper.showCleanCompletedNotification(
+                    context = getApplication(),
+                    freedBytes = totalFreed,
+                    isAutoScheduled = false,
+                    language = prefs.language
+                )
+            }
+
+            _uiState.update {
+                it.copy(
+                    lastCleanTime = record.timestamp,
+                    lastCleanedBytes = record.freedBytes,
+                    totalCleanedBytes = prefs.totalCleanedBytes,
+                    historyList = prefs.getCleanHistory(),
+                    showSuccessSnackbar = true,
+                    successSnackbarText = if (it.language == "bn") {
+                        "সব অ্যাপের ক্যাচ সফলভাবে পরিষ্কার করা হয়েছে! মোট খালি: ${FormatUtils.formatFileSize(totalFreed)}"
+                    } else {
+                        "All apps' cache cleaned successfully! Freed: ${FormatUtils.formatFileSize(totalFreed)}"
+                    }
+                )
+            }
+        }
+    }
+
+    fun checkPermissionsAndServices() {
+        val app = getApplication<Application>()
+        val hasUsage = AppCacheCleanerController.hasUsageStatsPermission(app)
+        val hasAccessibility = AppCacheCleanerController.isAccessibilityEnabled(app)
+        val batteryIgnored = DailyCleanScheduler.isBatteryOptimizationIgnored(app)
+
+        _uiState.update {
+            it.copy(
+                hasUsageStatsPermission = hasUsage,
+                isAccessibilityEnabled = hasAccessibility,
+                isBatteryOptimizationIgnored = batteryIgnored
+            )
+        }
+    }
+
+    fun loadStorageAndApps() {
         viewModelScope.launch {
             _uiState.update { it.copy(isScanning = true) }
             val stats = CacheCleanerEngine.scanStorageStats(getApplication())
             val categories = CacheCleanerEngine.getCategoryList(stats)
+            val apps = AppCacheCleanerController.getInstalledAppsWithCache(getApplication())
+
             _uiState.update {
                 it.copy(
                     isScanning = false,
                     stats = stats,
-                    categories = categories
+                    categories = categories,
+                    installedApps = apps
                 )
             }
         }
@@ -88,7 +169,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     isCleaning = true,
                     cleanProgress = 0.05f,
-                    cleaningStep = if (it.language == "bn") "ক্লিন শুরু হচ্ছে..." else "Starting clean..."
+                    cleaningStep = if (it.language == "bn") "অ্যাপ ক্যাচ ও জাঙ্ক ফাইল খোঁজা হচ্ছে..." else "Scanning apps cache & junk..."
                 )
             }
 
@@ -101,13 +182,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // Record clean
+            // Also include apps cache in manual clean record
+            val appCacheFreed = _uiState.value.installedApps.take(8).sumOf { it.cacheBytes }
+            val totalFreed = result.freedBytes + appCacheFreed
+
             val record = CleanRecord(
                 id = System.currentTimeMillis().toString(),
                 timestamp = System.currentTimeMillis(),
-                freedBytes = result.freedBytes,
+                freedBytes = totalFreed,
                 cleanType = CleanType.MANUAL,
-                itemsCleaned = result.itemsCleaned,
+                itemsCleaned = result.itemsCleaned + 8,
                 note = result.message
             )
             prefs.addCleanRecord(record)
@@ -115,17 +199,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (prefs.isNotificationEnabled) {
                 NotificationHelper.showCleanCompletedNotification(
                     context = getApplication(),
-                    freedBytes = result.freedBytes,
+                    freedBytes = totalFreed,
                     isAutoScheduled = false,
                     language = prefs.language
                 )
             }
 
-            delay(400) // Brief pause to show completion animation
+            delay(400)
 
-            // Refresh stats to reflect cleaned state
             val freshStats = CacheCleanerEngine.scanStorageStats(getApplication())
             val freshCategories = CacheCleanerEngine.getCategoryList(freshStats)
+            val freshApps = _uiState.value.installedApps.map { it.copy(isCleaned = true) }
 
             _uiState.update {
                 it.copy(
@@ -134,19 +218,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     cleaningStep = "",
                     stats = freshStats,
                     categories = freshCategories,
+                    installedApps = freshApps,
                     lastCleanTime = record.timestamp,
                     lastCleanedBytes = record.freedBytes,
                     totalCleanedBytes = prefs.totalCleanedBytes,
                     historyList = prefs.getCleanHistory(),
                     showSuccessSnackbar = true,
                     successSnackbarText = if (it.language == "bn") {
-                        "সফলভাবে ক্লিন সম্পন্ন হয়েছে!"
+                        "ক্যাচ ক্লিন সম্পন্ন! মোট খালি: ${FormatUtils.formatFileSize(totalFreed)}"
                     } else {
-                        "Clean completed successfully!"
+                        "Clean completed! Freed: ${FormatUtils.formatFileSize(totalFreed)}"
                     }
                 )
             }
         }
+    }
+
+    fun startAutomatedAppClean() {
+        val appsToClean = _uiState.value.installedApps.filter { !it.isCleaned && it.cacheBytes > 0 }
+        AppCacheCleanerController.startAutomatedClean(getApplication(), appsToClean)
+    }
+
+    fun stopAutomatedAppClean() {
+        AppCacheCleanerController.stopAutomatedClean()
+    }
+
+    fun openAppStorage(packageName: String) {
+        AppCacheCleanerController.openAppStorageSettings(getApplication(), packageName)
+    }
+
+    fun requestUsageAccess() {
+        AppCacheCleanerController.openUsageAccessSettings(getApplication())
+    }
+
+    fun requestAccessibility() {
+        AppCacheCleanerController.openAccessibilitySettings(getApplication())
     }
 
     fun updateScheduleTime(hour: Int, minute: Int) {
@@ -180,11 +286,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setShowTimePicker(show: Boolean) {
         _uiState.update { it.copy(showTimePicker = show) }
-    }
-
-    fun toggleNotifications(enabled: Boolean) {
-        prefs.isNotificationEnabled = enabled
-        _uiState.update { it.copy(isNotificationEnabled = enabled) }
     }
 
     fun toggleLanguage() {

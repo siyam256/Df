@@ -1,0 +1,6 @@
+{
+  "name": "Auto Cache Cleaner",
+  "description": "Daily automated background cache cleaner with custom schedule, clean white-green minimal design, and system performance boost.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

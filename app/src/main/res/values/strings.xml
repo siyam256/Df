@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Auto Cache Cleaner</string>
+    <string name="accessibility_service_label">Auto Cache Cleaner Deep Clean</string>
+    <string name="accessibility_service_description">Used solely to automate tapping the Cache Clean button for installed applications during scheduled cleaning.</string>
+</resources>
